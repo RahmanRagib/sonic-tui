@@ -1,26 +1,27 @@
 @echo off
-rem A small front for sonic-tui on Windows: put this folder on the path and
-rem type "sonic-tui" (or "SONIC-TUI") in a command prompt.
+rem A small front for sonic-tui on Windows.
 rem
-rem It runs the copy in this folder when it has been built, and the installed
-rem one otherwise.
+rem It builds the player first, so the program is never out of date, and then
+rem runs it. ".\sonic-tui" in this folder, and "sonic" from anywhere, both come
+rem through here.
 
 setlocal
 set "HERE=%~dp0"
+set "EXE=%HERE%target\release\sonic-tui.exe"
 
-if exist "%HERE%target\release\sonic-tui.exe" goto :local
-if exist "%HERE%target\debug\sonic-tui.exe" goto :local
+pushd "%HERE%"
+cargo build --release --quiet
+if errorlevel 1 (
+  popd
+  echo sonic-tui: the build failed 1>&2
+  exit /b 1
+)
+popd
 
-where sonic-tui >nul 2>&1
-if %errorlevel%==0 goto :installed
+if not exist "%EXE%" (
+  echo sonic-tui: there is no build 1>&2
+  exit /b 1
+)
 
-echo sonic-tui is not built yet.  Build it with:  cargo install --path "%HERE%" 1>&2
-exit /b 1
-
-:local
-"%HERE%target\release\sonic-tui.exe" %*
-exit /b %errorlevel%
-
-:installed
-sonic-tui %*
+"%EXE%" %*
 exit /b %errorlevel%

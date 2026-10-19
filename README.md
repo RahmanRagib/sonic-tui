@@ -66,9 +66,22 @@ cargo install --path .
 
 ### The Windows shortcut
 
-`sonic-tui.cmd` sits in the root of the repository. Put that folder on the path and
-`sonic-tui` works from a command prompt without installing anything: it runs the copy in
-`target\release` when it has been built, and the installed one otherwise.
+`sonic-tui.cmd` sits in the root of the repository. It builds the player first, so the
+program is never out of date, and then runs it:
+
+```sh
+cd sonic-tui
+.\sonic-tui            # the player, built and run
+```
+
+To start it from anywhere, put a small `sonic.cmd` in a folder on the path that calls it:
+
+```cmd
+@echo off
+call "D:\Ps\sonic-tui\sonic-tui.cmd" %*
+```
+
+Then `sonic` runs the player from any directory, with the current code in it.
 
 ## What it needs
 
