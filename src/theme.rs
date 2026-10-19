@@ -19,6 +19,11 @@ pub struct Theme {
     pub border_focus: Color,
     /// The titles of the panels.
     pub title: Color,
+    /// The name in the search box.
+    ///
+    /// The one warm colour in the interface: the yellow of a sign, the colour the
+    /// eye looks for before the green.
+    pub search_title: Color,
     /// The text itself.
     pub text: Color,
     /// The text that only carries the small print.
@@ -51,6 +56,7 @@ pub const THEME: Theme = Theme {
     border: Color::Rgb(0x2e, 0x4a, 0x2a),
     border_focus: Color::Rgb(0x6e, 0x84, 0x49),
     title: Color::Rgb(0x8a, 0x9a, 0x5b),
+    search_title: Color::Rgb(0xe3, 0xb3, 0x41),
     text: Color::Rgb(0xc3, 0xd3, 0xa2),
     dim: Color::Rgb(0x4f, 0x6a, 0x44),
     track: Color::Rgb(0x2a, 0x3e, 0x28),

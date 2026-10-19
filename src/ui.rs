@@ -44,11 +44,17 @@ fn search(frame: &mut Frame, area: Rect, app: &AppView) {
         )
     };
 
-    let title = if app.editing {
-        " Search YouTube Music (press esc) "
-    } else {
-        " Search YouTube Music (press /) "
-    };
+    let title = Line::from(vec![
+        Span::styled(" SonicSearch", Style::default().fg(THEME.search_title)),
+        Span::styled(
+            if app.editing {
+                " (press esc) "
+            } else {
+                " (press /) "
+            },
+            Style::default().fg(THEME.title),
+        ),
+    ]);
 
     let mut text = app.input.to_string();
     if app.editing {
@@ -64,7 +70,7 @@ fn search(frame: &mut Frame, area: Rect, app: &AppView) {
         .borders(Borders::ALL)
         .border_style(border)
         .style(Style::default().bg(THEME.surface))
-        .title(Span::styled(title, Style::default().fg(THEME.title)));
+        .title(title);
 
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
@@ -452,11 +458,23 @@ mod tests {
         let mut view = view(42);
         view.editing = true;
         let buffer = render(&view);
-        let row: String = row_of(&buffer, "Search YouTube Music")
+        let row: String = row_of(&buffer, "SonicSearch")
             .iter()
             .map(|cell| cell.symbol())
             .collect();
         assert!(row.contains("(press esc)"), "{row}");
+    }
+
+    #[test]
+    fn the_name_of_the_search_is_yellow() {
+        let buffer = render(&view(42));
+        let row = row_of(&buffer, "SonicSearch");
+        let name = row
+            .iter()
+            .find(|cell| cell.symbol() == "S")
+            .expect("the name of the search");
+        assert_eq!(name.fg, THEME.search_title);
+        assert_eq!(name.fg, Color::Rgb(0xe3, 0xb3, 0x41));
     }
 
     #[test]
