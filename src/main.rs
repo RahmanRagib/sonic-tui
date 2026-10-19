@@ -28,6 +28,9 @@ enum Message {
     Failed(String),
 }
 
+/// How far the right and the left arrow move the sound, in seconds.
+const SEEK: f64 = 2.0;
+
 fn main() -> io::Result<()> {
     let arguments: Vec<String> = std::env::args().collect();
 
@@ -230,7 +233,7 @@ Inside the player:
   /        open the search box        space   pause and resume
   enter    search, or play            n / p   the next or the previous song
   up/down  move through the songs     - / +   quieter and louder
-                                   s   stop        q   quit
+  ←/→      move the sound             s   stop        q   quit
 
 yt-dlp and ffmpeg have to be on the path: they fetch and decode the sound.",
         version = env!("CARGO_PKG_VERSION")
@@ -493,6 +496,14 @@ impl App {
                 self.move_by(-1);
                 Action::None
             }
+            KeyCode::Right => {
+                self.seek(SEEK);
+                Action::None
+            }
+            KeyCode::Left => {
+                self.seek(-SEEK);
+                Action::None
+            }
             KeyCode::Enter => {
                 self.play_selected();
                 Action::None
@@ -562,6 +573,11 @@ impl App {
     fn set_volume(&mut self, percent: u8) {
         self.volume = percent.min(100);
         self.engine.volume(self.volume as f32 / 100.0);
+    }
+
+    /// Moves the sound forward or back, by seconds.
+    fn seek(&mut self, seconds: f64) {
+        self.engine.seek(seconds);
     }
 
     /// Takes the answer of the search thread.
@@ -800,5 +816,45 @@ mod tests {
         let first = app.snapshot();
         app.receive(Message::Results(vec![track("four"), track("five")]));
         assert_ne!(first, app.snapshot(), "the songs are the same list");
+    }
+
+    #[test]
+    #[ignore = "it needs the network and a sound device"]
+    fn the_sound_can_be_moved() {
+        let engine = Engine::new().expect("the sound device");
+        let track = Track {
+            id: "5NV6Rdv1a3I".to_string(),
+            title: "One More Time (Radio Edit)".to_string(),
+            artist: "Daft Punk".to_string(),
+            album: None,
+            duration: Some(321),
+        };
+        engine.play(track);
+        std::thread::sleep(Duration::from_secs(6));
+        let before = engine.now_playing();
+        println!(
+            "before: {:?} elapsed {:.1}",
+            before.status,
+            before.elapsed()
+        );
+
+        engine.seek(2.0);
+        std::thread::sleep(Duration::from_millis(300));
+        let during = engine.now_playing();
+        println!(
+            "during: {:?} elapsed {:.1}",
+            during.status,
+            during.elapsed()
+        );
+
+        std::thread::sleep(Duration::from_secs(6));
+        let after = engine.now_playing();
+        println!("after:  {:?} elapsed {:.1}", after.status, after.elapsed());
+        assert!(
+            after.elapsed() > before.elapsed() + 2.0,
+            "the sound did not move: {} -> {}",
+            before.elapsed(),
+            after.elapsed()
+        );
     }
 }

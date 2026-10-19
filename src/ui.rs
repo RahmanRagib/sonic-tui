@@ -143,6 +143,7 @@ fn now_playing(frame: &mut Frame, area: Rect, app: &AppView) {
         Status::Loading => "loading the stream",
         Status::Playing => "",
         Status::Paused => "paused",
+        Status::Seeking => "seeking",
         Status::Failed => "failed",
     };
 
@@ -261,7 +262,7 @@ fn now_playing(frame: &mut Frame, area: Rect, app: &AppView) {
     frame.render_widget(title, rows[3]);
 
     let hints = Line::from(Span::styled(
-        "enter play  space pause  n next  p prev  -/+ volume  s stop  / search  q quit",
+        "↵ play  space pause  n next  p prev  ←/→ seek  -/+ vol  s stop  / search  q quit",
         Style::default().fg(THEME.accent),
     ));
     frame.render_widget(Paragraph::new(hints), rows[4]);
@@ -326,6 +327,7 @@ mod tests {
             status: Status::Playing,
             duration: Some(321),
             played: Arc::new(AtomicU64::new(44_100 * 2 * elapsed)),
+            offset: Arc::new(AtomicU64::new(0)),
             finished: Arc::new(AtomicBool::new(false)),
             error: None,
             notes: Arc::new(Mutex::new(String::new())),
@@ -441,7 +443,7 @@ mod tests {
     #[test]
     fn the_keys_are_green_under_a_mandarin_title() {
         let buffer = render(&view(42));
-        let keys = row_of(&buffer, "enter play");
+        let keys = row_of(&buffer, "↵ play");
         assert_eq!(keys[0].fg, THEME.accent);
         assert_eq!(keys[0].fg, Color::Rgb(0x4a, 0xde, 0x80));
 
@@ -451,6 +453,28 @@ mod tests {
             .find(|cell| cell.symbol() == "K")
             .expect("the title of the keys");
         assert_eq!(mandarin.fg, THEME.accent_title);
+    }
+
+    #[test]
+    fn the_keys_say_how_the_sound_is_moved() {
+        let buffer = render(&view(42));
+        let keys: String = row_of(&buffer, "↵ play")
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(keys.contains("←/→ seek"), "{keys}");
+    }
+
+    #[test]
+    fn the_seeking_is_written_in_the_title_of_the_panel() {
+        let mut view = view(42);
+        view.now_playing.status = Status::Seeking;
+        let buffer = render(&view);
+        let panel: String = row_of(&buffer, "Now playing")
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(panel.contains("seeking"), "{panel}");
     }
 
     #[test]

@@ -46,6 +46,8 @@ pub enum Status {
     Loading,
     Playing,
     Paused,
+    /// Fetching the stream again, further into the song.
+    Seeking,
     Failed,
 }
 
@@ -60,6 +62,8 @@ pub struct NowPlaying {
     pub duration: Option<u32>,
     /// The samples played so far, counted by the source.
     pub played: Arc<AtomicU64>,
+    /// The samples the stream was started at, after a seek.
+    pub offset: Arc<AtomicU64>,
     /// Set once the stream has ended, so the player can move on.
     pub finished: Arc<AtomicBool>,
     /// The reason the last attempt failed, if it did.
@@ -75,7 +79,7 @@ pub struct NowPlaying {
 impl NowPlaying {
     /// The seconds played so far.
     pub fn elapsed(&self) -> f64 {
-        seconds(self.played.load(Ordering::Relaxed))
+        seconds(self.offset.load(Ordering::Relaxed) + self.played.load(Ordering::Relaxed))
     }
 
     /// Whether the sound stopped before the song was over.
@@ -101,6 +105,21 @@ fn seconds(samples: u64) -> f64 {
     samples as f64 / (SAMPLE_RATE as f64 * CHANNELS as f64)
 }
 
+/// The samples a number of seconds stands for.
+fn samples(seconds: f64) -> u64 {
+    (seconds.max(0.0) * SAMPLE_RATE as f64 * CHANNELS as f64) as u64
+}
+
+/// Where a seek lands, in seconds from the beginning of the song.
+///
+/// The song is not seeked past its beginning, nor past its end.
+fn seek_to(position: f64, delta: f64, duration: Option<u32>) -> f64 {
+    match duration {
+        Some(duration) => (position + delta).clamp(0.0, duration as f64),
+        None => (position + delta).max(0.0),
+    }
+}
+
 /// What the player asks of the engine.
 pub enum Command {
     Play(Track),
@@ -108,6 +127,8 @@ pub enum Command {
     Resume,
     Stop,
     Volume(f32),
+    /// Moves the sound forward or back, by seconds.
+    Seek(f64),
     Quit,
 }
 
@@ -151,6 +172,11 @@ impl Engine {
     /// Sets the loudness, from 0 to 1.
     pub fn volume(&self, volume: f32) {
         let _ = self.commands.send(Command::Volume(volume));
+    }
+
+    /// Moves the sound forward or back, by seconds.
+    pub fn seek(&self, seconds: f64) {
+        let _ = self.commands.send(Command::Seek(seconds));
     }
 
     /// Ends the sound and the thread behind it.
@@ -215,7 +241,15 @@ fn audio_thread(inbox: Receiver<Command>, state: Arc<Mutex<NowPlaying>>) {
                     state.status = Status::Loading;
                     state.error = None;
                 }
-                launch(&track, mixer, &state, retries, &mut session, &mut player);
+                launch(
+                    &track,
+                    mixer,
+                    &state,
+                    retries,
+                    0.0,
+                    &mut session,
+                    &mut player,
+                );
                 continue;
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -238,7 +272,28 @@ fn audio_thread(inbox: Receiver<Command>, state: Arc<Mutex<NowPlaying>>) {
                     state.error = None;
                 }
 
-                launch(&track, mixer, &state, 0, &mut session, &mut player);
+                launch(&track, mixer, &state, 0, 0.0, &mut session, &mut player);
+            }
+            Command::Seek(delta) => {
+                // The stream is fetched again, further into the song or further
+                // back, because a stream that is already running cannot be turned
+                // back.
+                let Some(current) = &session else { continue };
+                let position = current.position();
+                let target = seek_to(position, delta, current.track.duration);
+                let track = current.track.clone();
+                if let Some(previous) = session.take() {
+                    previous.kill();
+                }
+                player = None;
+
+                {
+                    let mut state = state.lock().expect("the engine state");
+                    state.status = Status::Seeking;
+                    state.error = None;
+                }
+
+                launch(&track, mixer, &state, 0, target, &mut session, &mut player);
             }
             Command::Pause => {
                 if let Some(player) = &player {
@@ -288,20 +343,25 @@ fn audio_thread(inbox: Receiver<Command>, state: Arc<Mutex<NowPlaying>>) {
 }
 
 /// Starts a track and hands the sound to the player.
+///
+/// The `offset` is where in the song the stream begins, in seconds: zero for a song
+/// that starts at its beginning, and the place the reader has seeked to otherwise.
 fn launch(
     track: &Track,
     mixer: &rodio::mixer::Mixer,
     state: &Arc<Mutex<NowPlaying>>,
     retries: u32,
+    offset: f64,
     session: &mut Option<Session>,
     player: &mut Option<Player>,
 ) {
     let new_player = Player::connect_new(mixer);
-    match Session::start(track, &new_player, retries) {
+    match Session::start(track, &new_player, retries, offset) {
         Ok(started) => {
             {
                 let mut state = state.lock().expect("the engine state");
                 state.played = started.played.clone();
+                state.offset = started.offset.clone();
                 state.finished = started.finished.clone();
                 state.notes = started.notes.clone();
                 state.copied = started.copied.clone();
@@ -340,6 +400,8 @@ struct Session {
     /// The decoder, killed when the track changes.
     decoder: Child,
     played: Arc<AtomicU64>,
+    /// The samples the stream was started at, after a seek.
+    offset: Arc<AtomicU64>,
     finished: Arc<AtomicBool>,
     notes: Arc<Mutex<String>>,
     copied: Arc<AtomicU64>,
@@ -349,16 +411,20 @@ struct Session {
 }
 
 impl Session {
+    /// Where the sound is, in seconds from the beginning of the song.
+    fn position(&self) -> f64 {
+        seconds(self.offset.load(Ordering::Relaxed) + self.played.load(Ordering::Relaxed))
+    }
+
     /// Whether the sound stopped before the song was over.
     fn cut_short(&self) -> bool {
-        ended_early(
-            seconds(self.played.load(Ordering::Relaxed)),
-            self.track.duration,
-        )
+        ended_early(self.position(), self.track.duration)
     }
 
     /// Starts the pipeline for a track and hands the samples to the player.
-    fn start(track: &Track, player: &Player, retries: u32) -> anyhow::Result<Session> {
+    ///
+    /// The `offset` is where in the song the stream begins, in seconds.
+    fn start(track: &Track, player: &Player, retries: u32, offset: f64) -> anyhow::Result<Session> {
         let notes = Arc::new(Mutex::new(String::new()));
 
         let mut downloader = Process::new("yt-dlp")
@@ -381,11 +447,16 @@ impl Session {
             .spawn()
             .map_err(|_| anyhow::anyhow!("yt-dlp was not found on the path"))?;
 
-        let mut decoder = Process::new("ffmpeg")
+        // The decoder is told where to begin, so a song that is sought into starts
+        // there. The stream it reads cannot be turned back, so the decoder throws
+        // away what came before.
+        let mut decoder = Process::new("ffmpeg");
+        decoder.args(["-hide_banner", "-loglevel", "error"]);
+        if offset > 0.0 {
+            decoder.args(["-ss", &format!("{offset:.3}")]);
+        }
+        let mut decoder = decoder
             .args([
-                "-hide_banner",
-                "-loglevel",
-                "error",
                 "-i",
                 "pipe:0",
                 "-f",
@@ -508,6 +579,7 @@ impl Session {
             downloader,
             decoder,
             played,
+            offset: Arc::new(AtomicU64::new(samples(offset))),
             finished,
             notes,
             copied,
@@ -606,5 +678,26 @@ mod tests {
         assert_eq!(failure(notes), notes);
         assert_eq!(failure(""), "the stream did not come");
         assert_eq!(failure("\n  \n"), "the stream did not come");
+    }
+
+    #[test]
+    fn a_seek_moves_the_sound_and_stays_inside_the_song() {
+        assert_eq!(seek_to(10.0, 2.0, Some(100)), 12.0, "forward");
+        assert_eq!(seek_to(10.0, -2.0, Some(100)), 8.0, "backward");
+        assert_eq!(seek_to(1.0, -2.0, Some(100)), 0.0, "not before the song");
+        assert_eq!(seek_to(99.0, 2.0, Some(100)), 100.0, "not past the song");
+        assert_eq!(seek_to(10.0, -2.0, None), 8.0, "a song of no length");
+        assert_eq!(seek_to(1.0, -2.0, None), 0.0, "not before the song");
+    }
+
+    #[test]
+    fn the_offset_of_a_seek_counts_in_the_running_time() {
+        let offset = Arc::new(AtomicU64::new(samples(30.0)));
+        let playing = NowPlaying {
+            offset: offset.clone(),
+            played: Arc::new(AtomicU64::new(samples(12.0))),
+            ..NowPlaying::default()
+        };
+        assert_eq!(playing.elapsed(), 42.0);
     }
 }

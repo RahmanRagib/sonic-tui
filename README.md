@@ -20,7 +20,7 @@ plays — no account, no sign-in, no configuration.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 0:42 / 5:21    vol  80%                                                                 
  Keys ──────────────────────────────────────────────────────────────────────────────────
-enter play  space pause  n next  p prev  -/+ volume  s stop  / search  q quit            
+↵ play  space pause  n next  p prev  ←/→ seek  -/+ vol  s stop  / search  q quit        
 ```
 
 ## What it is
@@ -127,6 +127,7 @@ sonic-tui daft punk             # the player, searching for "daft punk" right aw
 | `Enter` | in the box: search · in the list: play the song under the cursor |
 | `Esc` | leave the search box |
 | `↑` `↓` (or `j` `k`) | move the cursor through the songs |
+| `←` `→` | move the sound forward or back, two seconds at a time |
 | `Space` | pause and resume |
 | `n` / `p` | the next or the previous song of the list |
 | `-` / `+` | quieter and louder, five percent at a time |
@@ -134,7 +135,8 @@ sonic-tui daft punk             # the player, searching for "daft punk" right aw
 | `q` | quit |
 
 The songs the search found are the playlist: `n` and `p` walk through them, and the player
-moves on by itself when a song ends.
+moves on by itself when a song ends. The sound is moved with `←` and `→`: the stream is
+fetched again, further into the song or further back, which takes a moment.
 
 ## How it works
 
