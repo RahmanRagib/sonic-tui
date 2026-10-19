@@ -130,23 +130,29 @@ fn results(frame: &mut Frame, area: Rect, app: &AppView) {
 fn now_playing(frame: &mut Frame, area: Rect, app: &AppView) {
     let playing = &app.now_playing;
 
-    let (marker, note) = match playing.status {
-        Status::Idle => ("·", "nothing playing".to_string()),
-        Status::Loading => ("…", "loading the stream".to_string()),
-        Status::Playing => ("▶", String::new()),
-        Status::Paused => ("⏸", "paused".to_string()),
-        Status::Failed => ("✗", playing.error.clone().unwrap_or_default()),
+    // The state of the player, in words. There is no icon beside the title of the
+    // song: the panel says what is going on instead.
+    let state = match playing.status {
+        Status::Idle => "nothing playing",
+        Status::Loading => "loading the stream",
+        Status::Playing => "",
+        Status::Paused => "paused",
+        Status::Failed => "failed",
     };
 
     let headline = if playing.title.is_empty() {
-        note.clone()
+        if playing.status == Status::Failed {
+            playing.error.clone().unwrap_or_else(|| state.to_string())
+        } else {
+            state.to_string()
+        }
     } else {
         let album = if playing.album.is_empty() {
             String::new()
         } else {
             format!(" · {}", playing.album)
         };
-        format!("{marker} {} — {}{album}", playing.title, playing.artist)
+        format!("{} — {}{album}", playing.title, playing.artist)
     };
 
     let elapsed = playing.elapsed();
@@ -199,14 +205,23 @@ fn now_playing(frame: &mut Frame, area: Rect, app: &AppView) {
         buffer[(tip, rows[1].y)].set_fg(shine);
     }
 
+    // The panel says what is going on, in words, where an icon used to be.
+    let mut title = vec![Span::styled(
+        " Now playing ",
+        Style::default().fg(THEME.title),
+    )];
+    if !state.is_empty() {
+        title.push(Span::styled(
+            format!("· {state} "),
+            Style::default().fg(THEME.accent_title),
+        ));
+    }
+
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(THEME.border))
         .style(Style::default().bg(THEME.surface))
-        .title(Span::styled(
-            " Now playing ",
-            Style::default().fg(THEME.title),
-        ));
+        .title(Line::from(title));
 
     frame.render_widget(
         Paragraph::new(Span::styled(headline, Style::default().fg(THEME.text))).block(block),
@@ -214,10 +229,11 @@ fn now_playing(frame: &mut Frame, area: Rect, app: &AppView) {
     );
 
     let mut footer = vec![Span::styled(running_time, Style::default().fg(THEME.dim))];
-    if !note.is_empty() && !playing.title.is_empty() {
+    if playing.status == Status::Failed && !playing.title.is_empty() {
+        let error = playing.error.clone().unwrap_or_default();
         footer.push(Span::styled(
-            format!("  ({note})"),
-            Style::default().fg(THEME.dim),
+            format!("  {error}"),
+            Style::default().fg(THEME.accent_title),
         ));
     }
     footer.push(Span::styled(
@@ -424,5 +440,22 @@ mod tests {
             .find(|cell| cell.symbol() == "K")
             .expect("the title of the keys");
         assert_eq!(mandarin.fg, THEME.accent_title);
+    }
+
+    #[test]
+    fn the_title_carries_no_icon() {
+        let buffer = render(&view(42));
+        let now = row_of(&buffer, "One More Time (Radio Edit) — Daft Punk");
+        assert!(!now.iter().any(|cell| cell.symbol() == "▶"));
+        assert!(!now.iter().any(|cell| cell.symbol() == "⏸"));
+    }
+
+    #[test]
+    fn the_state_is_written_in_the_title_of_the_panel() {
+        let buffer = render(&view(42));
+        let panel = row_of(&buffer, "Now playing");
+        let state: String = panel.iter().map(|cell| cell.symbol()).collect::<String>();
+        assert!(state.contains("Now playing"), "{state}");
+        assert!(!state.contains("paused"), "{state}");
     }
 }
