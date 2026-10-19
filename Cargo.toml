@@ -1,0 +1,31 @@
+[package]
+name = "sonic-tui"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "A music streaming client for the terminal, playing from YouTube Music as a guest"
+readme = "README.md"
+license = "MIT"
+keywords = ["music", "tui", "youtube", "terminal", "streaming"]
+categories = ["command-line-utilities", "multimedia::audio"]
+authors = ["sonic-tui contributors"]
+repository = "https://github.com/RahmanRagib/sonic-tui"
+homepage = "https://github.com/RahmanRagib/sonic-tui"
+
+[dependencies]
+anyhow = "1.0.104"
+crossterm = "0.29.0"
+ratatui = "0.30.2"
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "native-tls", "http2", "charset"] }
+rodio = "0.23.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+tokio = { version = "1.53.3", features = ["rt-multi-thread", "macros", "sync"] }
+
+[[bin]]
+name = "sonic-tui"
+path = "src/main.rs"
+
+[profile.release]
+lto = "thin"
+strip = true

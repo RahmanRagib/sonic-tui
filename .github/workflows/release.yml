@@ -1,0 +1,89 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+            archive: zip
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive: tar.gz
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Test
+        if: matrix.os == 'windows-latest' && matrix.target == 'x86_64-pc-windows-msvc'
+        run: cargo test --locked
+
+      - name: Pack
+        shell: bash
+        run: |
+          mkdir -p package
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            cp target/${{ matrix.target }}/release/sonic-tui.exe package/
+          else
+            cp target/${{ matrix.target }}/release/sonic-tui package/
+          fi
+          cp README.md LICENSE package/ 2>/dev/null || true
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            cd package && zip -r ../sonic-tui-${{ matrix.target }}.zip . && cd ..
+          else
+            tar -czf sonic-tui-${{ matrix.target }}.tar.gz -C package .
+          fi
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: sonic-tui-${{ matrix.target }}
+          path: |
+            sonic-tui-*.zip
+            sonic-tui-*.tar.gz
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Collect the archives
+        run: |
+          mkdir release
+          find artifacts -name "sonic-tui-*.zip" -o -name "sonic-tui-*.tar.gz" | while read file; do
+            cp "$file" release/
+          done
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
