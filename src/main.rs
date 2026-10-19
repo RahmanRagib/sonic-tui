@@ -13,6 +13,7 @@ use std::io::IsTerminal;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::Duration;
+use std::time::Instant;
 
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -95,6 +96,7 @@ fn scripted(keys: &str) -> io::Result<()> {
         engine: engine.clone(),
         volume: 80,
         tick: 0,
+        version: 0,
     };
 
     let (first, rest) = match keys.split_once('\r') {
@@ -189,6 +191,7 @@ fn draw_once(query: String) -> io::Result<()> {
         engine: engine.clone(),
         volume: 80,
         tick: 0,
+        version: 0,
     };
 
     let backend = ratatui::backend::TestBackend::new(90, 20);
@@ -310,6 +313,7 @@ fn run(terminal: &mut DefaultTerminal, query: String) -> io::Result<()> {
         engine: engine.clone(),
         volume: 80,
         tick: 0,
+        version: 0,
     };
 
     // A search given on the command line starts right away.
@@ -317,14 +321,26 @@ fn run(terminal: &mut DefaultTerminal, query: String) -> io::Result<()> {
         let _ = queries.send(query);
     }
 
+    let started = Instant::now();
+    // What is on the screen now. The interface is only drawn when this changes,
+    // so an idle player costs nothing.
+    let mut shown: Option<Snapshot> = None;
+
     loop {
         while let Ok(message) = messages.try_recv() {
             app.receive(message);
         }
         app.check_finished();
-        app.tick = app.tick.wrapping_add(1);
 
-        terminal.draw(|frame| ui::draw(frame, &app.view()))?;
+        // The clock of the animation is the wall clock, not the number of frames,
+        // so the bar and the blink keep their own time.
+        app.tick = started.elapsed().as_millis() as u64 / 100;
+
+        let snapshot = app.snapshot();
+        if shown.as_ref() != Some(&snapshot) {
+            terminal.draw(|frame| ui::draw(frame, &app.view()))?;
+            shown = Some(snapshot);
+        }
 
         if event::poll(Duration::from_millis(100))?
             && let Event::Key(key) = event::read()?
@@ -340,8 +356,35 @@ fn run(terminal: &mut DefaultTerminal, query: String) -> io::Result<()> {
                 }
                 Action::None => {}
             }
+            // A key has been pressed: the picture is different now.
+            shown = None;
         }
     }
+}
+
+/// What the interface shows, so that it is only drawn when it has changed.
+#[derive(Debug, PartialEq)]
+struct Snapshot {
+    input: String,
+    editing: bool,
+    busy: bool,
+    results: usize,
+    selected: usize,
+    status: String,
+    volume: u8,
+    title: String,
+    artist: String,
+    album: String,
+    state: Status,
+    /// The running time, in tenths of a second: the bar moves with it.
+    played: u32,
+    duration: Option<u32>,
+    error: Option<String>,
+    /// Counts the changes of the song list, so a new list is never mistaken for
+    /// the old one.
+    version: u64,
+    /// Whether the tip of the bar is shining.
+    blink: bool,
 }
 
 /// The state the interface keeps.
@@ -356,6 +399,8 @@ struct App {
     volume: u8,
     /// Counts the frames, so the bar can blink.
     tick: u64,
+    /// Counts the changes of the song list.
+    version: u64,
 }
 
 /// What a key press asks for.
@@ -378,6 +423,29 @@ impl App {
             now_playing: self.engine.now_playing(),
             volume: self.volume,
             tick: self.tick,
+        }
+    }
+
+    /// A picture of what the interface shows, to tell whether it has to be drawn again.
+    fn snapshot(&self) -> Snapshot {
+        let playing = self.engine.now_playing();
+        Snapshot {
+            input: self.input.clone(),
+            editing: self.editing,
+            busy: self.busy,
+            results: self.results.len(),
+            selected: self.selected,
+            status: self.status.clone(),
+            volume: self.volume,
+            title: playing.title.clone(),
+            artist: playing.artist.clone(),
+            album: playing.album.clone(),
+            state: playing.status,
+            played: (playing.elapsed() * 10.0) as u32,
+            duration: playing.duration,
+            error: playing.error.clone(),
+            version: self.version,
+            blink: playing.status == Status::Playing && ui::blink(self.tick),
         }
     }
 
@@ -508,6 +576,7 @@ impl App {
                 }
                 self.results = tracks;
                 self.selected = 0;
+                self.version = self.version.wrapping_add(1);
             }
             Message::Failed(error) => {
                 self.status = format!("the search failed: {error}");
@@ -598,6 +667,7 @@ mod tests {
             engine,
             volume: 80,
             tick: 0,
+            version: 0,
         }
     }
 
@@ -705,5 +775,26 @@ mod tests {
         app.key(key(KeyCode::Char('q')));
         assert_eq!(app.input, "q");
         assert!(!matches!(app.key(key(KeyCode::Char('q'))), Action::Quit));
+    }
+
+    #[test]
+    fn the_picture_tells_when_the_interface_has_to_be_drawn() {
+        let mut app = app();
+        let first = app.snapshot();
+        assert_eq!(first, app.snapshot(), "nothing changed");
+
+        app.key(key(KeyCode::Char('+')));
+        assert_ne!(first, app.snapshot(), "the loudness changed");
+
+        app.key(key(KeyCode::Char('/')));
+        assert_ne!(first, app.snapshot(), "the search box opened");
+    }
+
+    #[test]
+    fn a_new_list_of_songs_is_never_the_old_one() {
+        let mut app = app();
+        let first = app.snapshot();
+        app.receive(Message::Results(vec![track("four"), track("five")]));
+        assert_ne!(first, app.snapshot(), "the songs are the same list");
     }
 }

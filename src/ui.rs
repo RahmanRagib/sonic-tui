@@ -45,7 +45,7 @@ fn search(frame: &mut Frame, area: Rect, app: &AppView) {
     };
 
     let title = if app.editing {
-        " Search YouTube Music "
+        " Search YouTube Music (press esc) "
     } else {
         " Search YouTube Music (press /) "
     };
@@ -192,7 +192,7 @@ fn now_playing(frame: &mut Frame, area: Rect, app: &AppView) {
     // The gauge keeps the first cell of the line for its label, so the line is
     // started by hand, and the tip of the bar is the one that shines.
     let tip = rows[1].x + 1 + (ratio * f64::from(rows[1].width - 1)).floor() as u16;
-    let shine = if app.tick % 4 < 2 {
+    let shine = if blink(app.tick) {
         THEME.head
     } else {
         THEME.accent
@@ -259,6 +259,11 @@ fn now_playing(frame: &mut Frame, area: Rect, app: &AppView) {
         Style::default().fg(THEME.accent),
     ));
     frame.render_widget(Paragraph::new(hints), rows[4]);
+}
+
+/// Whether the tip of the bar is at the bright half of its blink.
+pub fn blink(tick: u64) -> bool {
+    tick % 4 < 2
 }
 
 /// A running time, written as `m:ss`.
@@ -440,6 +445,18 @@ mod tests {
             .find(|cell| cell.symbol() == "K")
             .expect("the title of the keys");
         assert_eq!(mandarin.fg, THEME.accent_title);
+    }
+
+    #[test]
+    fn the_search_box_says_how_to_leave_it() {
+        let mut view = view(42);
+        view.editing = true;
+        let buffer = render(&view);
+        let row: String = row_of(&buffer, "Search YouTube Music")
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(row.contains("(press esc)"), "{row}");
     }
 
     #[test]
