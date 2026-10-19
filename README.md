@@ -79,7 +79,7 @@ To start it from anywhere, put a small `sonic.cmd` in a folder on the path that 
 
 ```cmd
 @echo off
-call "D:\Ps\sonic-tui\sonic-tui.cmd" %*
+call "C:\path\to\sonic-tui\sonic-tui.cmd" %*
 ```
 
 Then `sonic` runs the player from any directory, with the current code in it.
@@ -95,6 +95,15 @@ Two helpers have to be on the path, because they do what a browser would do:
 
 The stream is fetched with the client of the YouTube apps, not the one of the website,
 which asks a guest to sign in as soon as it notices one. No account is used either way.
+
+The search is made with the public key of the YouTube Music web client. That key belongs
+to nobody in particular — it is in the page of YouTube Music for every visitor — but a key
+of one's own can be used instead, which is the way out if the shared one is ever refused:
+
+```sh
+set YOUTUBE_API_KEY=your-key-here    # Windows
+YOUTUBE_API_KEY=your-key-here sonic   # Linux
+```
 
 ```sh
 winget install yt-dlp.yt-dlp          # Windows

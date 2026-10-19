@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 
 /// The public InnerTube key the music web client uses. It is not a secret and needs no
 /// account: it only identifies the client the request claims to be.
-const API_KEY: &str = "AIzaSyC9XL3ZjWddXya6X74dJoCTL-WEYFDNX30";
+const PUBLIC_API_KEY: &str = "AIzaSyC9XL3ZjWddXya6X74dJoCTL-WEYFDNX30";
 const CLIENT: &str = "WEB_REMIX";
 const CLIENT_VERSION: &str = "1.20250515.01.00";
 /// The `params` that narrow a search to songs, the way the "Songs" tab does.
@@ -35,6 +35,19 @@ impl Track {
     pub fn watch_url(&self) -> String {
         format!("https://music.youtube.com/watch?v={}", self.id)
     }
+}
+
+/// The key the request is made with.
+///
+/// The key of the environment, when there is one, and the public key of the web client
+/// otherwise. The public key belongs to nobody in particular: it is in the page of
+/// YouTube Music for every visitor, and it is asked for with the name of the client.
+/// A key of one's own is the way out when the shared one is ever refused.
+fn api_key() -> String {
+    std::env::var("YOUTUBE_API_KEY")
+        .ok()
+        .filter(|key| !key.trim().is_empty())
+        .unwrap_or_else(|| PUBLIC_API_KEY.to_string())
 }
 
 /// Searches YouTube Music for songs matching `query`.
@@ -61,7 +74,7 @@ pub async fn search(query: &str) -> Result<Vec<Track>> {
         .context("the http client")?;
 
     let response = http
-        .post(format!("{ENDPOINT}?key={API_KEY}"))
+        .post(format!("{ENDPOINT}?key={}", api_key()))
         .header("X-YouTube-Client-Name", "67")
         .header("X-YouTube-Client-Version", CLIENT_VERSION)
         .header("Origin", "https://music.youtube.com")
@@ -253,6 +266,19 @@ mod tests {
         assert_eq!(parse_time("3:20"), Some(200));
         assert_eq!(parse_time("1:02:03"), Some(3723));
         assert_eq!(parse_time("853M plays"), None);
+    }
+
+    #[test]
+    fn the_key_of_the_environment_is_used_when_there_is_one() {
+        // SAFETY: no other test of this binary reads or writes the environment, and
+        // the tests of a binary run in threads of their own, so the variable is only
+        // ever touched here.
+        unsafe { std::env::set_var("YOUTUBE_API_KEY", "a-key-of-our-own") };
+        assert_eq!(api_key(), "a-key-of-our-own");
+
+        // SAFETY: the same as above.
+        unsafe { std::env::remove_var("YOUTUBE_API_KEY") };
+        assert_eq!(api_key(), PUBLIC_API_KEY);
     }
 
     #[test]
