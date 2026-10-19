@@ -32,8 +32,7 @@ enter play  space pause  n next  p prev  -/+ volume  s stop  / search  q quit
 * **An interface** — a small terminal UI: a search box, the songs it found, and what is
   playing right now.
 * **A mood** — a matrix of moss green, the spring green of the keys under a mandarin title,
-  a bar that fills from the left at the speed of the music, and the scanlines of an old
-  television drifting down the screen.
+  and a bar that fills from the left at the speed of the music.
 
 ## Installing it
 
@@ -135,7 +134,7 @@ music.youtube.com ──yt-dlp──▶ the stream ──ffmpeg──▶ s16le P
 | --- | --- |
 | `src/ytm.rs` | the provider. It asks YouTube Music's own search endpoint for songs and reads the answer the way Sonora's YouTube provider does: the `musicShelfRenderer` of the answer holds `musicResponsiveListItemRenderer` items, whose flex columns carry the title, the artist, the album and the running time, and whose `playlistItemData` carries the video the stream is fetched from. A guest client, so nothing has to be signed in. |
 | `src/playback.rs` | the engine. It runs the two helpers as a pipeline, hands the samples to `rodio` as a source, and keeps the counters the interface draws: how far the song has come, how loud it is, whether it is playing. When YouTube cuts a stream short with a 403, the stream is fetched again, up to three times. |
-| `src/ui.rs` | the interface: a search box, the songs it found, what is playing, the bar that fills from the left at the speed of the song, and the scanlines. |
+| `src/ui.rs` | the interface: a search box, the songs it found, what is playing, and the bar that fills from the left at the speed of the song. |
 | `src/theme.rs` | the colours: a matrix of moss green, the spring green of the keys, the mandarin of their title. |
 | `src/main.rs` | the loop that ties them together, the key handling and the command line. |
 

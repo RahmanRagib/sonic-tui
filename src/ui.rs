@@ -2,7 +2,7 @@
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, LineGauge, List, ListItem, ListState, Paragraph};
 
@@ -28,40 +28,6 @@ pub fn draw(frame: &mut Frame, app: &AppView) {
     search(frame, rows[0], app);
     results(frame, rows[1], app);
     now_playing(frame, rows[2], app);
-
-    scanlines(frame, app.tick);
-}
-
-/// The lines of a cathode-ray tube.
-///
-/// Every other row is darkened a little, and the band drifts down the screen as the
-/// frames go by, the way the beam of an old television moved.
-fn scanlines(frame: &mut Frame, tick: u64) {
-    let phase = (tick / 12 % 2) as u16;
-    // The tube breathes: now and then the lines are a shade deeper.
-    let keep: u8 = if tick % 36 < 18 { 190 } else { 170 };
-
-    let buffer = frame.buffer_mut();
-    let area = *buffer.area();
-    for y in area.top()..area.bottom() {
-        if (y + phase).is_multiple_of(2) {
-            continue;
-        }
-        for x in area.left()..area.right() {
-            let cell = &mut buffer[(x, y)];
-            cell.set_bg(darken(cell.bg, keep));
-        }
-    }
-}
-
-/// A colour a shade darker than the one it was given.
-fn darken(color: Color, keep: u8) -> Color {
-    let scale = |value: u8| ((u16::from(value) * u16::from(keep)) / 255) as u8;
-    match color {
-        Color::Rgb(r, g, b) => Color::Rgb(scale(r), scale(g), scale(b)),
-        Color::Reset => THEME.background,
-        other => other,
-    }
 }
 
 /// The search box.
@@ -302,6 +268,7 @@ pub struct AppView<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::style::Color;
     use std::sync::Arc;
     use std::sync::Mutex;
     use std::sync::atomic::AtomicBool;
@@ -457,29 +424,5 @@ mod tests {
             .find(|cell| cell.symbol() == "K")
             .expect("the title of the keys");
         assert_eq!(mandarin.fg, THEME.accent_title);
-    }
-
-    #[test]
-    fn the_scanlines_darken_every_other_row() {
-        let buffer = render(&view(42));
-        let dim = |above: u8, below: u8| {
-            let scaled = u16::from(below) * 255;
-            let original = u16::from(above);
-            scaled < original * 255 && scaled >= original * 165 && scaled <= original * 195
-        };
-
-        let mut lines = 0;
-        for y in 1..buffer.area.height {
-            let above = buffer.cell((0, y - 1)).expect("a cell").bg;
-            let below = buffer.cell((0, y)).expect("a cell").bg;
-            if let (Color::Rgb(r1, g1, b1), Color::Rgb(r2, g2, b2)) = (above, below)
-                && dim(r1, r2)
-                && dim(g1, g2)
-                && dim(b1, b2)
-            {
-                lines += 1;
-            }
-        }
-        assert!(lines > 0, "there are no scanlines");
     }
 }
