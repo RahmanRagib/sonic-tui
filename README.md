@@ -93,13 +93,17 @@ Two helpers have to be on the path, because they do what a browser would do:
 | [yt-dlp](https://github.com/yt-dlp/yt-dlp) | resolves the address of the stream and signs it |
 | [ffmpeg](https://ffmpeg.org) | decodes the stream into sound |
 
+The stream is fetched with the client of the YouTube apps, not the one of the website,
+which asks a guest to sign in as soon as it notices one. No account is used either way.
+
 ```sh
 winget install yt-dlp.yt-dlp          # Windows
 sudo apt install yt-dlp ffmpeg         # Debian / Ubuntu
 ```
 
 Without them the interface still runs and the search still works; only the sound needs
-them.
+them. When a stream will not come, the player says so instead of moving on to the next
+song.
 
 ## Using it
 

@@ -31,6 +31,12 @@ const CHANNELS: u16 = 2;
 const TICK: std::time::Duration = std::time::Duration::from_millis(250);
 /// How many times a stream is fetched again when YouTube cuts it short.
 const ATTEMPTS: u32 = 3;
+/// The clients of YouTube the stream is fetched with.
+///
+/// The web client, which is the one yt-dlp reaches for first, is asked to sign in as
+/// soon as YouTube notices a guest that fetches too much. The clients of the apps ask
+/// for nothing, so they are the ones used here.
+const CLIENTS: &str = "youtube:player_client=android,mweb";
 
 /// What the engine is doing with the sound.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -70,6 +76,22 @@ impl NowPlaying {
     /// The seconds played so far.
     pub fn elapsed(&self) -> f64 {
         seconds(self.played.load(Ordering::Relaxed))
+    }
+
+    /// Whether the sound stopped before the song was over.
+    ///
+    /// A stream that dies at once is not the end of the song: it is a failure, and
+    /// the player must not walk to the next one as if the music had finished.
+    pub fn ended_early(&self) -> bool {
+        ended_early(self.elapsed(), self.duration)
+    }
+}
+
+/// Whether the sound stopped before the song was over.
+fn ended_early(played: f64, duration: Option<u32>) -> bool {
+    match duration {
+        Some(duration) => played + 2.0 < duration as f64,
+        None => played < 0.5,
     }
 }
 
@@ -144,7 +166,7 @@ impl Engine {
 
 /// The audio thread: it owns the sound device, the player and the running processes.
 fn audio_thread(inbox: Receiver<Command>, state: Arc<Mutex<NowPlaying>>) {
-    let device = match DeviceSinkBuilder::open_default_sink() {
+    let mut device = match DeviceSinkBuilder::open_default_sink() {
         Ok(device) => device,
         Err(error) => {
             let mut state = state.lock().expect("the engine state");
@@ -153,6 +175,8 @@ fn audio_thread(inbox: Receiver<Command>, state: Arc<Mutex<NowPlaying>>) {
             return;
         }
     };
+    // The player says goodbye by itself; there is no need to say it twice.
+    device.log_on_drop(false);
 
     let mixer = device.mixer();
     let mut player: Option<Player> = None;
@@ -165,18 +189,27 @@ fn audio_thread(inbox: Receiver<Command>, state: Arc<Mutex<NowPlaying>>) {
                 // YouTube refuses a stream now and then with a 403. When the sound stops
                 // before the song is over, the stream is fetched again.
                 let Some(current) = &session else { continue };
-                if !current.finished.load(Ordering::Relaxed) || current.retries >= ATTEMPTS {
-                    continue;
-                }
-                if !current.cut_short() {
+                if !current.finished.load(Ordering::Relaxed) || !current.cut_short() {
                     continue;
                 }
                 let track = current.track.clone();
                 let retries = current.retries + 1;
+                let copied = current.copied.load(Ordering::Relaxed);
+                let notes = current.notes.lock().expect("the notes").clone();
                 if let Some(previous) = session.take() {
                     previous.kill();
                 }
                 player = None;
+
+                // Nothing came through, or there is nothing left to try: the player
+                // says what went wrong instead of walking to the next song.
+                if copied == 0 || retries > ATTEMPTS {
+                    let mut state = state.lock().expect("the engine state");
+                    state.status = Status::Failed;
+                    state.error = Some(failure(&notes));
+                    continue;
+                }
+
                 {
                     let mut state = state.lock().expect("the engine state");
                     state.status = Status::Loading;
@@ -289,6 +322,15 @@ fn launch(
     }
 }
 
+/// The reason the stream did not come, in the words of the tools behind it.
+fn failure(notes: &str) -> String {
+    let mut lines = notes.lines().map(str::trim).filter(|line| !line.is_empty());
+    match lines.next() {
+        Some(line) => line.to_string(),
+        None => "the stream did not come".to_string(),
+    }
+}
+
 /// A running stream: the two processes and the counters of the track being played.
 struct Session {
     /// The track the stream belongs to, kept for another attempt.
@@ -309,11 +351,10 @@ struct Session {
 impl Session {
     /// Whether the sound stopped before the song was over.
     fn cut_short(&self) -> bool {
-        let played = seconds(self.played.load(Ordering::Relaxed));
-        match self.track.duration {
-            Some(duration) => played + 2.0 < duration as f64,
-            None => played < 0.5,
-        }
+        ended_early(
+            seconds(self.played.load(Ordering::Relaxed)),
+            self.track.duration,
+        )
     }
 
     /// Starts the pipeline for a track and hands the samples to the player.
@@ -326,6 +367,8 @@ impl Session {
                 "--no-warnings",
                 "--quiet",
                 "--no-progress",
+                "--extractor-args",
+                CLIENTS,
                 "-f",
                 "bestaudio/best",
                 "-o",
@@ -538,5 +581,30 @@ impl Source for PcmSource {
 
     fn total_duration(&self) -> Option<std::time::Duration> {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_song_that_stops_early_is_not_the_end_of_the_song() {
+        assert!(ended_early(0.0, Some(321)), "nothing was played");
+        assert!(ended_early(30.0, Some(321)), "the song was cut short");
+        assert!(!ended_early(321.0, Some(321)), "the song was over");
+        assert!(
+            ended_early(0.4, None),
+            "a song with no length played nothing"
+        );
+        assert!(!ended_early(2.0, None), "a song with no length was played");
+    }
+
+    #[test]
+    fn the_reason_the_stream_did_not_come_is_kept() {
+        let notes = "ERROR: [youtube] 5NV6Rdv1a3I: Sign in to confirm you are not a bot.";
+        assert_eq!(failure(notes), notes);
+        assert_eq!(failure(""), "the stream did not come");
+        assert_eq!(failure("\n  \n"), "the stream did not come");
     }
 }

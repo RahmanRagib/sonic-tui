@@ -587,8 +587,12 @@ impl App {
     /// Moves on when the song that was playing has ended.
     fn check_finished(&mut self) {
         let playing = self.engine.now_playing();
+        // A stream that stops before the song is over is a failure, not the end of
+        // the song: the engine is given the chance to fetch it again, and the
+        // playlist must not move on as if the music had finished.
         if playing.status == Status::Playing
             && playing.finished.load(std::sync::atomic::Ordering::Relaxed)
+            && !playing.ended_early()
         {
             if self.selected + 1 < self.results.len() {
                 self.step(1);
