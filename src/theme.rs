@@ -30,6 +30,11 @@ pub struct Theme {
     /// The head of the progress bar.
     pub head: Color,
     /// The keys.
+    ///
+    /// The greens of the interface are all moss: olive, yellow-green, the colour of
+    /// a damp forest floor. The keys need a voice of their own, so they are the
+    /// one green in the palette that is not moss: a spring green, cool and bright
+    /// against the warm moss around it.
     pub accent: Color,
     /// The title over the keys.
     pub accent_title: Color,
@@ -48,10 +53,10 @@ pub const THEME: Theme = Theme {
     title: Color::Rgb(0x8a, 0x9a, 0x5b),
     text: Color::Rgb(0xc3, 0xd3, 0xa2),
     dim: Color::Rgb(0x4f, 0x6a, 0x44),
-    track: Color::Rgb(0x1b, 0x29, 0x18),
+    track: Color::Rgb(0x2a, 0x3e, 0x28),
     fill: Color::Rgb(0x6e, 0x84, 0x49),
     head: Color::Rgb(0xc9, 0xe7, 0x9e),
-    accent: Color::Rgb(0xe3, 0xb3, 0x41),
+    accent: Color::Rgb(0x4a, 0xde, 0x80),
     accent_title: Color::Rgb(0xf2, 0x85, 0x22),
     highlight_bg: Color::Rgb(0x8a, 0x9a, 0x5b),
     highlight_fg: Color::Rgb(0x08, 0x0d, 0x08),

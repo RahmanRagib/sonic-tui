@@ -2,9 +2,9 @@
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Block, Borders, LineGauge, List, ListItem, ListState, Paragraph};
 
 use crate::playback::{NowPlaying, Status};
 use crate::theme::THEME;
@@ -21,13 +21,47 @@ pub fn draw(frame: &mut Frame, app: &AppView) {
     let rows = Layout::vertical([
         Constraint::Length(3),
         Constraint::Min(3),
-        Constraint::Length(6),
+        Constraint::Length(7),
     ])
     .split(area);
 
     search(frame, rows[0], app);
     results(frame, rows[1], app);
     now_playing(frame, rows[2], app);
+
+    scanlines(frame, app.tick);
+}
+
+/// The lines of a cathode-ray tube.
+///
+/// Every other row is darkened a little, and the band drifts down the screen as the
+/// frames go by, the way the beam of an old television moved.
+fn scanlines(frame: &mut Frame, tick: u64) {
+    let phase = (tick / 12 % 2) as u16;
+    // The tube breathes: now and then the lines are a shade deeper.
+    let keep: u8 = if tick % 36 < 18 { 190 } else { 170 };
+
+    let buffer = frame.buffer_mut();
+    let area = *buffer.area();
+    for y in area.top()..area.bottom() {
+        if (y + phase).is_multiple_of(2) {
+            continue;
+        }
+        for x in area.left()..area.right() {
+            let cell = &mut buffer[(x, y)];
+            cell.set_bg(darken(cell.bg, keep));
+        }
+    }
+}
+
+/// A colour a shade darker than the one it was given.
+fn darken(color: Color, keep: u8) -> Color {
+    let scale = |value: u8| ((u16::from(value) * u16::from(keep)) / 255) as u8;
+    match color {
+        Color::Rgb(r, g, b) => Color::Rgb(scale(r), scale(g), scale(b)),
+        Color::Reset => THEME.background,
+        other => other,
+    }
 }
 
 /// The search box.
@@ -138,7 +172,7 @@ fn now_playing(frame: &mut Frame, area: Rect, app: &AppView) {
         Status::Failed => ("✗", playing.error.clone().unwrap_or_default()),
     };
 
-    let mut headline = if playing.title.is_empty() {
+    let headline = if playing.title.is_empty() {
         note.clone()
     } else {
         let album = if playing.album.is_empty() {
@@ -148,10 +182,6 @@ fn now_playing(frame: &mut Frame, area: Rect, app: &AppView) {
         };
         format!("{marker} {} — {}{album}", playing.title, playing.artist)
     };
-
-    if !note.is_empty() && !playing.title.is_empty() {
-        headline.push_str(&format!("  ({note})"));
-    }
 
     let elapsed = playing.elapsed();
     let total = playing.duration.unwrap_or(0) as f64;
@@ -169,27 +199,39 @@ fn now_playing(frame: &mut Frame, area: Rect, app: &AppView) {
     let loudness = format!("vol {:>3}%", app.volume);
 
     let rows = Layout::vertical([
-        Constraint::Length(4),
+        Constraint::Length(3),
+        Constraint::Length(1),
+        Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(1),
     ])
     .split(area);
 
-    // The panel, with the bar running along the bottom of it.
-    let inner = rows[0].width.saturating_sub(2);
-    let right = format!("{running_time}   {loudness}");
-    let right_width = right.chars().count() as u16;
-    let bar_width = (inner * 45 / 100)
-        .max(8)
-        .min(inner.saturating_sub(right_width + 1));
+    // The bar: one unbroken line, filling from the left at the speed of the music.
+    let gauge = LineGauge::default()
+        .filled_symbol("━")
+        .unfilled_symbol("━")
+        .filled_style(Style::default().fg(THEME.fill))
+        .unfilled_style(Style::default().fg(THEME.track))
+        .ratio(ratio)
+        .label("");
+    frame.render_widget(gauge, rows[1]);
 
-    let mut line = progress_bar(ratio, bar_width, app.tick);
-    line.push(Span::raw(
-        " ".repeat(inner.saturating_sub(bar_width + right_width) as usize),
-    ));
-    line.push(Span::styled(running_time, Style::default().fg(THEME.dim)));
-    line.push(Span::raw("   "));
-    line.push(Span::styled(loudness, Style::default().fg(THEME.dim)));
+    // The gauge keeps the first cell of the line for its label, so the line is
+    // started by hand, and the tip of the bar is the one that shines.
+    let tip = rows[1].x + 1 + (ratio * f64::from(rows[1].width - 1)).floor() as u16;
+    let shine = if app.tick % 4 < 2 {
+        THEME.head
+    } else {
+        THEME.accent
+    };
+    let buffer = frame.buffer_mut();
+    buffer[(rows[1].x, rows[1].y)]
+        .set_symbol("━")
+        .set_style(Style::default().fg(THEME.track));
+    if tip < rows[1].x + rows[1].width {
+        buffer[(tip, rows[1].y)].set_fg(shine);
+    }
 
     let block = Block::default()
         .borders(Borders::ALL)
@@ -201,13 +243,22 @@ fn now_playing(frame: &mut Frame, area: Rect, app: &AppView) {
         ));
 
     frame.render_widget(
-        Paragraph::new(vec![
-            Line::from(Span::styled(headline, Style::default().fg(THEME.text))),
-            Line::from(line),
-        ])
-        .block(block),
+        Paragraph::new(Span::styled(headline, Style::default().fg(THEME.text))).block(block),
         rows[0],
     );
+
+    let mut footer = vec![Span::styled(running_time, Style::default().fg(THEME.dim))];
+    if !note.is_empty() && !playing.title.is_empty() {
+        footer.push(Span::styled(
+            format!("  ({note})"),
+            Style::default().fg(THEME.dim),
+        ));
+    }
+    footer.push(Span::styled(
+        format!("    {loudness}"),
+        Style::default().fg(THEME.dim),
+    ));
+    frame.render_widget(Paragraph::new(Line::from(footer)), rows[2]);
 
     // The keys, under a mandarin title.
     let title = Block::default()
@@ -219,48 +270,13 @@ fn now_playing(frame: &mut Frame, area: Rect, app: &AppView) {
                 .fg(THEME.accent_title)
                 .add_modifier(Modifier::BOLD),
         ));
-    frame.render_widget(title, rows[1]);
+    frame.render_widget(title, rows[3]);
 
     let hints = Line::from(Span::styled(
         "enter play  space pause  n next  p prev  -/+ volume  s stop  / search  q quit",
         Style::default().fg(THEME.accent),
     ));
-    frame.render_widget(Paragraph::new(hints), rows[2]);
-}
-
-/// The bar that fills from the left as the song plays.
-///
-/// It grows at the speed of the music: a track of five minutes takes five minutes to fill
-/// the bar. The head of the bar blinks, and the cells just behind it shine a little
-/// brighter, so the bar looks alive while it moves.
-fn progress_bar(ratio: f64, width: u16, tick: u64) -> Vec<Span<'static>> {
-    let width = width.max(1) as usize;
-    let filled = ((ratio.clamp(0.0, 1.0) * width as f64) as usize).min(width);
-
-    let blink = if tick % 4 < 2 {
-        THEME.head
-    } else {
-        THEME.title
-    };
-    let fill = Style::default().fg(THEME.fill);
-    let bright = Style::default().fg(THEME.head);
-    let empty = Style::default().fg(THEME.track);
-
-    let mut spans = Vec::with_capacity(width);
-    for cell in 0..width {
-        let (symbol, style) = if filled >= width {
-            // The song is over: the bar is full.
-            ("█", if width - cell <= 3 { bright } else { fill })
-        } else if cell < filled {
-            ("█", if filled - cell <= 3 { bright } else { fill })
-        } else if cell == filled {
-            ("▌", Style::default().fg(blink))
-        } else {
-            ("░", empty)
-        };
-        spans.push(Span::styled(symbol, style));
-    }
-    spans
+    frame.render_widget(Paragraph::new(hints), rows[4]);
 }
 
 /// A running time, written as `m:ss`.
@@ -358,63 +374,82 @@ mod tests {
         panic!("there is no row with “{text}”");
     }
 
-    fn bar(ratio: f64, width: u16, tick: u64) -> String {
-        progress_bar(ratio, width, tick)
-            .iter()
-            .map(|span| span.content.as_ref())
-            .collect()
+    /// The row of the interface that holds the given symbol.
+    fn row_with(buffer: &ratatui::buffer::Buffer, symbol: &str) -> Vec<ratatui::buffer::Cell> {
+        for y in 0..buffer.area.height {
+            let row: String = (0..buffer.area.width)
+                .map(|x| buffer.cell((x, y)).map(|cell| cell.symbol()).unwrap_or(" "))
+                .collect();
+            if row.contains(symbol) {
+                return (0..buffer.area.width)
+                    .filter_map(|x| buffer.cell((x, y)).cloned())
+                    .collect();
+            }
+        }
+        panic!("there is no row with “{symbol}”");
     }
 
     #[test]
-    fn the_bar_is_as_wide_as_it_is_told() {
-        assert_eq!(bar(0.5, 20, 0).chars().count(), 20);
+    fn the_bar_is_one_unbroken_line() {
+        let buffer = render(&view(42));
+        let line: String = row_with(&buffer, "━")
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(!line.contains(' '), "{line}");
+        assert_eq!(line.chars().count(), 90);
     }
 
     #[test]
     fn the_bar_fills_from_the_left() {
-        let text = bar(0.25, 20, 0);
-        assert!(text.starts_with("█████"), "{text}");
-        assert!(text.ends_with('░'), "{text}");
-    }
-
-    #[test]
-    fn the_bar_starts_empty() {
-        let text = bar(0.0, 8, 0);
-        assert!(text.starts_with('▌'), "{text}");
-        assert!(text.ends_with('░'), "{text}");
-    }
-
-    #[test]
-    fn the_bar_is_full_at_the_end_of_the_song() {
-        let text = bar(1.0, 8, 0);
-        assert_eq!(text, "████████");
-    }
-
-    #[test]
-    fn the_head_of_the_bar_blinks() {
-        let lit = progress_bar(0.5, 20, 0)[10].style;
-        let dim = progress_bar(0.5, 20, 2)[10].style;
-        assert_ne!(lit, dim);
+        let buffer = render(&view(42));
+        let line = row_with(&buffer, "━");
+        let moss = line.iter().filter(|cell| cell.fg == THEME.fill).count();
+        let track = line.iter().filter(|cell| cell.fg == THEME.track).count();
+        assert!(moss > 0, "the bar is empty");
+        assert!(track > 0, "the bar has no track");
+        // The filled part comes first.
+        let first_moss = line
+            .iter()
+            .position(|cell| cell.fg == THEME.fill)
+            .expect("the filled part of the bar");
+        let last_track = line
+            .iter()
+            .rposition(|cell| cell.fg == THEME.track)
+            .expect("the track of the bar");
+        assert!(first_moss < last_track);
     }
 
     #[test]
     fn the_bar_grows_with_the_music() {
         let early = render(&view(42));
         let later = render(&view(84));
-        let played = |buffer: &ratatui::buffer::Buffer| {
-            row_of(buffer, "█")
+        let moss = |buffer: &ratatui::buffer::Buffer| {
+            row_with(buffer, "━")
                 .iter()
-                .filter(|cell| cell.symbol() == "█")
+                .filter(|cell| cell.fg == THEME.fill)
                 .count()
         };
-        assert!(played(&later) > played(&early));
+        assert!(moss(&later) > moss(&early));
     }
 
     #[test]
-    fn the_keys_are_yellow_under_a_mandarin_title() {
+    fn the_tip_of_the_bar_shines() {
+        let buffer = render(&view(42));
+        let line = row_with(&buffer, "━");
+        let shining = line
+            .iter()
+            .filter(|cell| cell.fg == THEME.head || cell.fg == THEME.accent)
+            .count();
+        assert_eq!(shining, 1);
+    }
+
+    #[test]
+    fn the_keys_are_green_under_a_mandarin_title() {
         let buffer = render(&view(42));
         let keys = row_of(&buffer, "enter play");
         assert_eq!(keys[0].fg, THEME.accent);
+        assert_eq!(keys[0].fg, Color::Rgb(0x4a, 0xde, 0x80));
 
         let title = row_of(&buffer, "Keys");
         let mandarin = title
@@ -422,5 +457,29 @@ mod tests {
             .find(|cell| cell.symbol() == "K")
             .expect("the title of the keys");
         assert_eq!(mandarin.fg, THEME.accent_title);
+    }
+
+    #[test]
+    fn the_scanlines_darken_every_other_row() {
+        let buffer = render(&view(42));
+        let dim = |above: u8, below: u8| {
+            let scaled = u16::from(below) * 255;
+            let original = u16::from(above);
+            scaled < original * 255 && scaled >= original * 165 && scaled <= original * 195
+        };
+
+        let mut lines = 0;
+        for y in 1..buffer.area.height {
+            let above = buffer.cell((0, y - 1)).expect("a cell").bg;
+            let below = buffer.cell((0, y)).expect("a cell").bg;
+            if let (Color::Rgb(r1, g1, b1), Color::Rgb(r2, g2, b2)) = (above, below)
+                && dim(r1, r2)
+                && dim(g1, g2)
+                && dim(b1, b2)
+            {
+                lines += 1;
+            }
+        }
+        assert!(lines > 0, "there are no scanlines");
     }
 }
