@@ -4,6 +4,7 @@
 //! The catalogue is YouTube Music, reached as a guest: no sign-in, no account, no cookie.
 
 mod playback;
+mod theme;
 mod ui;
 mod ytm;
 
@@ -93,6 +94,7 @@ fn scripted(keys: &str) -> io::Result<()> {
         status: String::new(),
         engine: engine.clone(),
         volume: 80,
+        tick: 0,
     };
 
     let (first, rest) = match keys.split_once('\r') {
@@ -186,6 +188,7 @@ fn draw_once(query: String) -> io::Result<()> {
         status: "12 songs".to_string(),
         engine: engine.clone(),
         volume: 80,
+        tick: 0,
     };
 
     let backend = ratatui::backend::TestBackend::new(90, 20);
@@ -306,6 +309,7 @@ fn run(terminal: &mut DefaultTerminal, query: String) -> io::Result<()> {
         status: String::new(),
         engine: engine.clone(),
         volume: 80,
+        tick: 0,
     };
 
     // A search given on the command line starts right away.
@@ -318,6 +322,7 @@ fn run(terminal: &mut DefaultTerminal, query: String) -> io::Result<()> {
             app.receive(message);
         }
         app.check_finished();
+        app.tick = app.tick.wrapping_add(1);
 
         terminal.draw(|frame| ui::draw(frame, &app.view()))?;
 
@@ -349,6 +354,8 @@ struct App {
     status: String,
     engine: Arc<Engine>,
     volume: u8,
+    /// Counts the frames, so the bar can blink.
+    tick: u64,
 }
 
 /// What a key press asks for.
@@ -370,6 +377,7 @@ impl App {
             status: &self.status,
             now_playing: self.engine.now_playing(),
             volume: self.volume,
+            tick: self.tick,
         }
     }
 
@@ -589,6 +597,7 @@ mod tests {
             status: String::new(),
             engine,
             volume: 80,
+            tick: 0,
         }
     }
 

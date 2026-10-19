@@ -28,6 +28,8 @@ plays — no account, no sign-in, no configuration.
   plays it.
 * **An interface** — a small terminal UI: a search box, the songs it found, and what is
   playing right now.
+* **A mood** — a matrix of moss green, a yellow line for the keys under a mandarin title,
+  and a bar that fills from the left at the speed of the music.
 
 ## Installing it
 
